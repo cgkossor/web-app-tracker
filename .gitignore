@@ -1,0 +1,9 @@
+config.json
+tracker.db
+*.pyc
+__pycache__/
+.vscode/
+deploy.ps1
+deploy.sh
+*.key
+*.key.pub
