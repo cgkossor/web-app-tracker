@@ -234,9 +234,38 @@ def check_sites(config):
         conn.close()
 
 
+def test_email(config):
+    email_cfg = config["email"]
+    site = config["sites"][0]
+    detection_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    diff_info = {
+        "diff_text": (
+            f"--- {site['name']} (previous)\n"
+            f"+++ {site['name']} (current)\n"
+            "@@ -1,3 +1,3 @@\n"
+            " Some unchanged content\n"
+            "-Old line that was removed\n"
+            "+New line that was added\n"
+            " More unchanged content"
+        ),
+        "similarity": 85.0,
+        "lines_added": 1,
+        "lines_removed": 1,
+    }
+
+    print(f"Sending test email to {email_cfg['to_addr']}...")
+    send_notification(email_cfg, site, diff_info, detection_time)
+    print("Test email sent successfully!")
+
+
 def main():
     config = load_config()
     once = "--once" in sys.argv
+
+    if "--test-email" in sys.argv:
+        test_email(config)
+        return
 
     if once:
         print("Running single check...")
