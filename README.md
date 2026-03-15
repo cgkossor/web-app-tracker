@@ -92,6 +92,41 @@ Send a test notification to verify your email settings:
 python tracker.py --test-email
 ```
 
+## Example email
+
+When a change is detected, you'll receive an email like this:
+
+**Subject:** `[Website Change] Python Downloads - 2026-03-15 14:30:07`
+
+```
+Change detected on: Python Downloads
+URL: https://www.python.org/downloads/
+Time: 2026-03-15 14:30:07
+Similarity to previous version: 94.2%
+
+==================================================
+  CHANGE SUMMARY
+==================================================
+Lines added:   3
+Lines removed: 2
+
+==================================================
+  DETAILED DIFF
+==================================================
+
+--- Python Downloads (previous)
++++ Python Downloads (current)
+@@ -1,5 +1,6 @@
+ Active Python Releases
+-Python 3.13.2     Jan. 4, 2025    Download
++Python 3.13.3     April 8, 2025   Download
++Python 3.13.2     Jan. 4, 2025    Download
+ Python 3.12.9     Feb. 4, 2025    Download
+-Looking for a specific release?
++Looking for a specific release? See the full list.
+ Pre-releases
+```
+
 ## How it works
 
 1. Fetches each page and extracts visible text (strips HTML, scripts, styles)
