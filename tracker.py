@@ -88,6 +88,35 @@ def log_change(conn, site_name, diff_info, detection_time, notified):
     conn.commit()
 
 
+def fetch_shopify_products(url):
+    """Fetch product list from a Shopify collection using the JSON API.
+    Returns a stable text representation of product titles and prices."""
+    # Convert collection URL to JSON API endpoint
+    base_url = url.split("?")[0]
+    json_url = f"{base_url}/products.json?limit=250"
+
+    response = requests.get(
+        json_url,
+        timeout=30,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        },
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    lines = []
+    for p in data["products"]:
+        title = p["title"]
+        price = p["variants"][0]["price"] if p.get("variants") else "N/A"
+        lines.append(f"{title} - ${price}")
+    return "\n".join(sorted(lines))
+
+
 def fetch_text(url, selector=None):
     response = requests.get(
         url,
@@ -196,7 +225,10 @@ def check_sites(config):
             print(f"Checking: {name} ({url})")
 
             try:
-                current_text = fetch_text(url, selector)
+                if site.get("type") == "shopify":
+                    current_text = fetch_shopify_products(url)
+                else:
+                    current_text = fetch_text(url, selector)
             except requests.RequestException as e:
                 print(f"  Error fetching {url}: {e}")
                 continue
