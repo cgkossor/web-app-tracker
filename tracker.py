@@ -1,3 +1,4 @@
+import argparse
 import json
 import re
 import sqlite3
@@ -16,6 +17,14 @@ from bs4 import BeautifulSoup
 SCRIPT_DIR = Path(__file__).parent
 CONFIG_PATH = SCRIPT_DIR / "config.json"
 DB_PATH = SCRIPT_DIR / "tracker.db"
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Website change tracker")
+    parser.add_argument("--once", action="store_true", help="Run a single check and exit")
+    parser.add_argument("--test-email", action="store_true", help="Send a test email and exit")
+    parser.add_argument("--data-dir", type=str, help="Directory for persistent data files (tracker.db)")
+    return parser.parse_args()
 
 
 def load_config():
@@ -292,14 +301,21 @@ def test_email(config):
 
 
 def main():
-    config = load_config()
-    once = "--once" in sys.argv
+    global DB_PATH
+    args = parse_args()
 
-    if "--test-email" in sys.argv:
+    if args.data_dir:
+        data_dir = Path(args.data_dir)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        DB_PATH = data_dir / "tracker.db"
+
+    config = load_config()
+
+    if args.test_email:
         test_email(config)
         return
 
-    if once:
+    if args.once:
         print("Running single check...")
         check_sites(config)
         print("Done.")

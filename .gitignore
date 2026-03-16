@@ -7,3 +7,5 @@ deploy.ps1
 deploy.sh
 *.key
 *.key.pub
+CHANGELOG.md
+VPS_STRUCTURE.md
