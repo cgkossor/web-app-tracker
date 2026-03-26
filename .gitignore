@@ -9,3 +9,4 @@ deploy.sh
 *.key.pub
 CHANGELOG.md
 VPS_STRUCTURE.md
+DISCORD_NOTIFICATIONS.md

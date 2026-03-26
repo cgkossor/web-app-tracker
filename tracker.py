@@ -1,11 +1,13 @@
 import argparse
 import json
+import logging
 import re
 import sqlite3
 import difflib
 import smtplib
 import sys
 import time
+import urllib.request
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -13,6 +15,8 @@ from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 SCRIPT_DIR = Path(__file__).parent
 CONFIG_PATH = SCRIPT_DIR / "config.json"
@@ -22,7 +26,7 @@ DB_PATH = SCRIPT_DIR / "tracker.db"
 def parse_args():
     parser = argparse.ArgumentParser(description="Website change tracker")
     parser.add_argument("--once", action="store_true", help="Run a single check and exit")
-    parser.add_argument("--test-email", action="store_true", help="Send a test email and exit")
+    parser.add_argument("--test-email", "--test-notification", action="store_true", help="Send a test notification to all enabled channels and exit")
     parser.add_argument("--data-dir", type=str, help="Directory for persistent data files (tracker.db)")
     return parser.parse_args()
 
@@ -186,7 +190,121 @@ def compute_diff(old_text, new_text, site_name):
     }
 
 
-def send_notification(email_cfg, site, diff_info, detection_time):
+def _get_notifications_config(config):
+    """Get notifications config, supporting both old and new formats."""
+    if "notifications" in config:
+        return config["notifications"]
+    # Legacy format: top-level "email" key
+    if "email" in config:
+        return {"email": {**config["email"], "enabled": True}}
+    return {}
+
+
+def _send_email(subject, body, email_cfg):
+    """Send a single email via SMTP."""
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = email_cfg["from_addr"]
+    msg["To"] = email_cfg["to_addr"]
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    with smtplib.SMTP(email_cfg["smtp_server"], email_cfg["smtp_port"]) as server:
+        server.starttls()
+        server.login(email_cfg["username"], email_cfg["password"])
+        server.sendmail(email_cfg["from_addr"], email_cfg["to_addr"], msg.as_string())
+
+    print(f"  Email sent to {email_cfg['to_addr']}")
+
+
+def _split_discord_message(subject, message, limit=1900):
+    """Split message into Discord-safe chunks with code blocks (2000 char limit)."""
+    header = f"**{subject}**\n"
+    overhead = len(header) + 8  # ```\n ... \n```
+    available = limit - overhead
+
+    if len(message) <= available:
+        return [f"{header}```\n{message}\n```"]
+
+    chunks = []
+    lines = message.split("\n")
+    current = []
+    current_len = 0
+    for line in lines:
+        if current_len + len(line) + 1 > available:
+            if current:
+                chunks.append("\n".join(current))
+            current = [line]
+            current_len = len(line)
+        else:
+            current.append(line)
+            current_len += len(line) + 1
+    if current:
+        chunks.append("\n".join(current))
+
+    result = []
+    for i, chunk in enumerate(chunks):
+        prefix = header if i == 0 else f"**{subject} (cont.)**\n"
+        result.append(f"{prefix}```\n{chunk}\n```")
+    return result
+
+
+def _send_discord(subject, message, discord_cfg, max_retries=3):
+    """Send a message to Discord via webhook. Splits long messages automatically."""
+    url = discord_cfg["webhook_url"]
+    chunks = _split_discord_message(subject, message)
+
+    for chunk in chunks:
+        payload = json.dumps({"content": chunk})
+        for attempt in range(1, max_retries + 1):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=payload.encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    print(f"  Discord notification sent (HTTP {resp.status})")
+                break
+            except Exception as e:
+                if attempt < max_retries:
+                    delay = 5 * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"Discord send failed (attempt {attempt}/{max_retries}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error(
+                        f"Discord send failed after {max_retries} attempts: {e}"
+                    )
+                    return False
+    return True
+
+
+def _deliver(subject, message, config):
+    """Send message to all enabled channels (email + discord).
+    Returns True if at least one channel succeeded."""
+    notif_cfg = _get_notifications_config(config)
+    success = False
+
+    email_cfg = notif_cfg.get("email", {})
+    if email_cfg.get("enabled", True) and email_cfg.get("smtp_server"):
+        try:
+            _send_email(subject, message, email_cfg)
+            success = True
+        except Exception as e:
+            print(f"  Error sending email: {e}")
+
+    discord_cfg = notif_cfg.get("discord", {})
+    if discord_cfg.get("enabled") and discord_cfg.get("webhook_url"):
+        if _send_discord(subject, message, discord_cfg):
+            success = True
+
+    return success
+
+
+def send_notification(config, site, diff_info, detection_time):
     subject = f"[Website Change] {site['name']} - {detection_time}"
 
     body = (
@@ -208,22 +326,10 @@ def send_notification(email_cfg, site, diff_info, detection_time):
         f"{diff_info['diff_text']}\n"
     )
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = email_cfg["from_addr"]
-    msg["To"] = email_cfg["to_addr"]
-    msg.attach(MIMEText(body, "plain", "utf-8"))
-
-    with smtplib.SMTP(email_cfg["smtp_server"], email_cfg["smtp_port"]) as server:
-        server.starttls()
-        server.login(email_cfg["username"], email_cfg["password"])
-        server.sendmail(email_cfg["from_addr"], email_cfg["to_addr"], msg.as_string())
-
-    print(f"  Email sent to {email_cfg['to_addr']}")
+    return _deliver(subject, body, config)
 
 
 def check_sites(config):
-    email_cfg = config["email"]
     conn = init_db()
 
     try:
@@ -260,10 +366,9 @@ def check_sites(config):
 
             notified = False
             try:
-                send_notification(email_cfg, site, diff_info, detection_time)
-                notified = True
+                notified = send_notification(config, site, diff_info, detection_time)
             except Exception as e:
-                print(f"  Error sending email: {e}")
+                print(f"  Error sending notification: {e}")
                 print(f"  Snapshot NOT updated (will retry next run)")
 
             log_change(conn, name, diff_info, detection_time, notified)
@@ -275,8 +380,7 @@ def check_sites(config):
         conn.close()
 
 
-def test_email(config):
-    email_cfg = config["email"]
+def test_notifications(config):
     site = config["sites"][0]
     detection_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -295,9 +399,11 @@ def test_email(config):
         "lines_removed": 1,
     }
 
-    print(f"Sending test email to {email_cfg['to_addr']}...")
-    send_notification(email_cfg, site, diff_info, detection_time)
-    print("Test email sent successfully!")
+    print("Sending test notification to all enabled channels...")
+    if send_notification(config, site, diff_info, detection_time):
+        print("Test notification sent successfully!")
+    else:
+        print("No notifications were sent. Check your config.")
 
 
 def main():
@@ -312,7 +418,7 @@ def main():
     config = load_config()
 
     if args.test_email:
-        test_email(config)
+        test_notifications(config)
         return
 
     if args.once:

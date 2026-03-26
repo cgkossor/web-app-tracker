@@ -84,6 +84,14 @@ Run in a loop, checking at the configured interval:
 python tracker.py
 ```
 
+### Custom data directory
+
+Store `tracker.db` in a separate directory (recommended for server deployments to protect data from code deploys):
+
+```bash
+python tracker.py --data-dir /opt/hobbies/data/website-tracker
+```
+
 ### Test email
 
 Send a test notification to verify your email settings:
@@ -145,7 +153,7 @@ On the first run, the tracker saves a baseline snapshot for each site without se
 
 ## Database
 
-All data is stored in `tracker.db` (SQLite), auto-created on first run:
+All data is stored in `tracker.db` (SQLite), auto-created on first run. By default it's created in the script directory, or in the `--data-dir` path if specified:
 
 - **`snapshots`** - Latest content for each site
 - **`changes`** - History of every detected change with diffs
@@ -170,7 +178,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/hobbies/services/web-app-tracker
-ExecStart=/opt/hobbies/services/web-app-tracker/venv/bin/python -u tracker.py
+ExecStart=/opt/hobbies/services/web-app-tracker/venv/bin/python -u tracker.py --data-dir /opt/hobbies/data/website-tracker
 Restart=always
 RestartSec=10
 
