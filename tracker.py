@@ -260,7 +260,10 @@ def _send_discord(subject, message, discord_cfg, max_retries=3):
                 req = urllib.request.Request(
                     url,
                     data=payload.encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": "WebsiteTracker/1.0",
+                    },
                     method="POST",
                 )
                 with urllib.request.urlopen(req, timeout=15) as resp:
