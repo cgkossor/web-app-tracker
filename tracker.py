@@ -130,6 +130,72 @@ def fetch_shopify_products(url):
     return "\n".join(sorted(lines))
 
 
+def fetch_opendoor_data(url):
+    """Fetch the Opendoor accountability chart data from the embedded RSC payload.
+    Returns a stable text summary of the most recent weekly data points."""
+    response = requests.get(
+        url,
+        timeout=30,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        },
+    )
+    response.raise_for_status()
+    html = response.text
+
+    m = re.search(r'self\.__next_f\.push\(\[1,"(6:.*?)"\]\)', html, re.DOTALL)
+    if not m:
+        raise ValueError("Opendoor RSC payload not found on page")
+    decoded = m.group(1).encode().decode("unicode_escape", errors="replace")
+
+    idx = decoded.find('"currentStateData":')
+    if idx == -1:
+        raise ValueError("currentStateData not found in Opendoor payload")
+
+    start = decoded.find("[", idx)
+    depth = 0
+    end = start
+    for i in range(start, len(decoded)):
+        if decoded[i] == "[":
+            depth += 1
+        elif decoded[i] == "]":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+
+    data = json.loads(decoded[start:end])
+    reals = [d for d in data if d.get("actual") not in (None, 0)]
+    if not reals:
+        raise ValueError("No actual contract data points found")
+
+    lines = [f"Data as of: {reals[-1]['month']}"]
+    lines.append(f"Total data points: {len(reals)}")
+    lines.append("")
+    lines.append("Recent weeks (actual contracts, trendline, change vs prior week):")
+    for i, d in enumerate(reals[-8:]):
+        week = d["month"]
+        actual = d["actual"]
+        trend = d.get("trendline")
+        idx_in_reals = len(reals) - len(reals[-8:]) + i
+        if idx_in_reals > 0:
+            prev = reals[idx_in_reals - 1]["actual"]
+            delta = actual - prev
+            pct = (delta / prev * 100) if prev else 0
+            change = f" ({delta:+d}, {pct:+.1f}%)"
+        else:
+            change = ""
+        trend_str = f", trend {trend}" if trend is not None else ""
+        tag = "  <-- MOST RECENT" if i == len(reals[-8:]) - 1 else ""
+        lines.append(f"  {week}: {actual} contracts{trend_str}{change}{tag}")
+
+    return "\n".join(lines)
+
+
 def fetch_text(url, selector=None):
     response = requests.get(
         url,
@@ -338,13 +404,19 @@ def check_sites(config):
     try:
         for site in config["sites"]:
             name = site["name"]
+            if site.get("enabled") is False:
+                print(f"Skipping (disabled): {name}")
+                continue
             url = site["url"]
             selector = site.get("selector")
             print(f"Checking: {name} ({url})")
 
             try:
-                if site.get("type") == "shopify":
+                site_type = site.get("type")
+                if site_type == "shopify":
                     current_text = fetch_shopify_products(url)
+                elif site_type == "opendoor":
+                    current_text = fetch_opendoor_data(url)
                 else:
                     current_text = fetch_text(url, selector)
             except requests.RequestException as e:
